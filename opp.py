@@ -1,72 +1,68 @@
 import streamlit as st
 import cv2
 import numpy as np
+from PIL import Image
 
-def predict_k2_plus_time(image, real_width_mm, thickness_mm):
-    # 1. 이미지 이진화 및 로고 영역 추출
-    _, binary = cv2.threshold(image, 127, 255, cv2.THRESH_BINARY_INV)
+st.set_page_config(page_title="LPSS 출력 예측", layout="centered")
+st.title("🖨️ LPSS 출력 예측")
+st.write("슬라이서 데이터(벽 3겹, 10% 인필)를 기준으로 보정된 계산기입니다.")
+
+uploaded_file = st.file_uploader("로고 이미지 업로드", type=['jpg', 'png', 'jpeg'])
+
+if uploaded_file is not None:
+    # 이미지 처리
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    img_bgr = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+
+    # 1. 사용자 입력
+    col1, col2 = st.columns(2)
+    with col1:
+        real_width_mm = st.number_input("가로 폭 입력 (mm)", value=340.0)
+    with col2:
+        height_mm = st.number_input("두께 입력 (mm)", value=20.0)
+
+    # 2. 면적 정밀 계산 (빈 공간 제외)
+    # 이진화: 배경과 로고 분리
+    _, binary = cv2.threshold(img_gray, 150, 255, cv2.THRESH_BINARY_INV)
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    if not contours:
-        return None
 
-    # 2. 기하학적 데이터 산출
-    all_points = np.concatenate(contours)
-    _, _, p_width, _ = cv2.boundingRect(all_points)
-    mm_per_px = real_width_mm / p_width
-    
-    # 단면적(Area) 및 둘레(Perimeter) 계산
-    total_area_mm2 = np.sum(binary == 255) * (mm_per_px ** 2)
-    total_perimeter_mm = sum([cv2.arcLength(cnt, True) for cnt in contours]) * mm_per_px
-    
-    # 3. K2 Plus 실전 예측 수식 (슬라이서 데이터 반영)
-    # 레이어 높이 0.25mm 기준 (스크린샷 설정 반영)
-    total_layers = thickness_mm / 0.25
-    
-    # [A] 벽 출력 시간 (3겹 기준 가중치 적용)
-    # 대형물일수록 코너 감속이 많아 가중 계수 1.8 적용
-    wall_time_min = (total_perimeter_mm * 3 * total_layers / 150) / 60 * 1.8
-    
-    # [B] 인필 및 솔리드 채우기 시간 (10% 인필 + 상하단 스킨)
-    # 스크린샷의 높은 인필 비중 반영을 위해 계수 2.2 적용
-    infill_time_min = (total_area_mm2 * total_layers / (0.4 * 250)) / 60 * 2.2
-    
-    # [C] 고정 준비 시간 (베드 히팅 및 레벨링)
-    prep_time_min = 25 
-    
-    # 총 합계
-    total_min = wall_time_min + infill_time_min + prep_time_min
-    
-    return {
-        "time_hr": int(total_min // 60),
-        "time_min": int(total_min % 60),
-        "area": total_area_mm2,
-        "weight": total_area_mm2 * thickness_mm * 0.00125 * 1.5 # 1.5배 보정 계수 적용
-    }
+    if contours:
+        # 전체를 감싸는 가로 픽셀 폭 구하기
+        all_points = np.concatenate(contours)
+        _, _, p_width, _ = cv2.boundingRect(all_points)
+        
+        # 픽셀당 mm 비율
+        mm_per_px = real_width_mm / p_width
+        
+        # 순수 로고 단면적 계산 (픽셀 단위 면적 합산)
+        pure_area_px = sum([cv2.contourArea(cnt) for cnt in contours])
+        actual_area_mm2 = pure_area_px * (mm_per_px ** 2)
 
-# --- UI 부분 ---
-st.title("🖨️ K2 Plus 실전 출력 시간 예측기")
-st.write("이미지를 분석하여 크리얼리티 슬라이서와 유사한 시간을 계산합니다.")
+        # 3. 보정 계수 적용 (슬라이서 데이터 기반)
+        # 밀도: 1.24 (PLA), 충진 가중치: 0.22 (벽 3겹 + 인필 10%의 실질 채움 비율)
+        fill_factor = 0.22 
+        estimated_weight_g = (actual_area_mm2 * height_mm * 1.24 * 0.001) * fill_factor
+        
+        # 시간 계산: 1g당 1.3분 + 예열/준비 50분
+        total_minutes = (estimated_weight_g * 1.3) + 50
+        hours = int(total_minutes // 60)
+        minutes = int(total_minutes % 60)
 
-img_file = st.file_uploader("로고 이미지 업로드", type=['jpg', 'png'])
-col1, col2 = st.columns(2)
-with col1:
-    in_w = st.number_input("가로 폭 입력 (mm)", value=350)
-with col2:
-    in_t = st.number_input("두께 입력 (mm)", value=20)
-
-if img_file:
-    file_bytes = np.asarray(bytearray(img_file.read()), dtype=np.uint8)
-    gray_img = cv2.imdecode(file_bytes, cv2.IMREAD_GRAYSCALE)
-    
-    res = predict_k2_plus_time(gray_img, in_w, in_t)
-    
-    if res:
+        # 4. 결과 출력
         st.divider()
         st.subheader("📊 예상 결과 (K2 Plus 기준)")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("예상 시간", f"{res['time_hr']}시간 {res['time_min']}분")
-        c2.metric("예상 무게", f"{res['weight']:.1f} g")
-        c3.metric("단면적", f"{res['area']:.1f} mm²")
         
-        st.warning(f"💡 이 계산은 슬라이서의 '벽 3겹, 0.25mm 레이어' 설정을 기준으로 보정되었습니다.")
+        res_col1, res_col2, res_col3 = st.columns(3)
+        res_col1.metric("예상 시간", f"{hours}시간 {minutes}분")
+        res_col2.metric("예상 무게", f"{estimated_weight_g:.1f} g")
+        res_col3.metric("순수 단면적", f"{actual_area_mm2:.1f} mm²")
+
+        st.warning(f"💡 이 계산은 슬라이서의 **'벽 3겹, 0.25mm 레이어, 인필 10%'** 설정을 기준으로 보정되었습니다.")
+        
+        # 5. 시각화 (인식된 영역 확인용)
+        st.write("### 로고 인식 범위 확인")
+        cv2.drawContours(img_bgr, contours, -1, (0, 255, 0), 2)
+        st.image(img_bgr, caption="초록색 선 내부 면적만 계산에 포함됩니다.", use_column_width=True)
+    else:
+        st.error("로고를 인식할 수 없습니다.")
