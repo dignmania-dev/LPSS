@@ -37,15 +37,15 @@ if uploaded_file is not None:
     with col_in2:
         height_mm = st.number_input("두께 입력 (mm)", value=20.0)
 
-    # 견적 타입 설정 (A, B, C 타입 가이드 적용)
-    st.write("### 견적 타입 및 단가 설정")
+    # 견적 타입 설정
+    st.write("### **견적 타입 및 단가 설정**")
     col_type, col_price = st.columns(2)
     with col_type:
         type_name = st.text_input("타입 입력 (예: A, B, C...)", value="A")
     with col_price:
         hourly_rate = st.number_input(f"{type_name} 타입 시간당 금액 (원)", value=5000, step=500)
 
-    # 면적 계산 로직 (순수 로고 영역만 추출)
+    # 면적 계산 로직
     _, binary = cv2.threshold(img_gray, 150, 255, cv2.THRESH_BINARY_INV)
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -60,9 +60,9 @@ if uploaded_file is not None:
         # 실전 보정 계수 및 10% 무게 할증
         fill_factor = 0.38 
         base_weight = (actual_area_mm2 * height_mm * 1.24 * 0.001) * fill_factor
-        estimated_weight_g = base_weight * 1.10 # 무게 10% 추가
+        estimated_weight_g = base_weight * 1.10 
         
-        # 시간 계산 (무게 기반 정밀 산출)
+        # 시간 계산
         total_minutes = (estimated_weight_g * 1.15) + 20
         total_hours_decimal = total_minutes / 60
         hours = int(total_minutes // 60)
@@ -73,20 +73,9 @@ if uploaded_file is not None:
 
         # --- 결과 출력 섹션 ---
         st.divider()
-        st.subheader(f"📊 예상 결과 (K2 Plus / {type_name} 타입)")
+        st.write(f"### **예상 결과 (K2 Plus / {type_name} 타입)**")
         
         res_col1, res_col2, res_col3 = st.columns(3)
         res_col1.metric("예상 시간", f"{hours}시간 {minutes}분")
         res_col2.metric("예상 무게 (+10%)", f"{estimated_weight_g:.1f} g")
         res_col3.metric("순수 단면적", f"{actual_area_mm2:.1f} mm²")
-
-        st.info("💡 이 계산은 슬라이서의 '벽 3겹, 0.25mm 레이어, 인필 10%' 설정을 기준으로 보정되었습니다.")
-        
-        # 견적 가격 최종 출력 (강조 표시)
-        st.success(f"### 💰 최종 견적 가격 ({type_name} 타입): **{int(total_price):,} 원**")
-        
-        with st.expander("로고 인식 범위 확인"):
-            cv2.drawContours(img_bgr, contours, -1, (0, 255, 0), 2)
-            st.image(img_bgr, use_container_width=True)
-    else:
-        st.error("로고 영역을 인식할 수 없습니다.")
