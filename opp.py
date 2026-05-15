@@ -79,3 +79,14 @@ if uploaded_file is not None:
         res_col1.metric("예상 시간", f"{hours}시간 {minutes}분")
         res_col2.metric("예상 무게 (+10%)", f"{estimated_weight_g:.1f} g")
         res_col3.metric("순수 단면적", f"{actual_area_mm2:.1f} mm²")
+
+        st.info("💡 이 계산은 슬라이서의 '벽 3겹, 0.25mm 레이어, 인필 10%' 설정을 기준으로 보정되었습니다.")
+        
+        # 최종 견적 가격 출력 (디자인 요구사항 적용)
+        st.write(f"### **최종 견적 가격 ({type_name} 타입): {int(total_price):,} 원**")
+        
+        with st.expander("로고 인식 범위 확인"):
+            cv2.drawContours(img_bgr, contours, -1, (0, 255, 0), 2)
+            st.image(img_bgr, use_container_width=True)
+    else:
+        st.error("로고 영역을 인식할 수 없습니다.")
